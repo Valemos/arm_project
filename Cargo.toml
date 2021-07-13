@@ -1,0 +1,25 @@
+[package]
+authors = ["Anton <programworkerbox@gmail.com>"]
+edition = "2018"
+name = "rtic-prototype"
+version = "0.1.0"
+
+[dependencies]
+cortex-m-rtic = "0.5.1"
+panic-itm = "0.4.1"
+embedded-hal = "0.2.3"
+
+[dependencies.stm32f3xx-hal]
+features = ["stm32f303xe", "rt"]
+version = "0.7.0"
+
+# this lets you use `cargo fix`!
+[[bin]]
+name = "rtic-prototype"
+test = false
+bench = false
+
+[profile.release]
+codegen-units = 1 # better optimizations
+debug = true # symbols are nice and they don't increase the size on Flash
+lto = true # better optimizations
