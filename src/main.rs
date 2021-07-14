@@ -3,18 +3,23 @@
 #![deny(unused_imports)]
 
 use panic_itm as _;
-use rtic::{app, Exclusive};
-use stm32f3xx_hal::{
+use rtic::{app, Exclusive, Mutex};
+
+use cortex_m;
+use stm32f3xx_hal as hal;
+
+use hal::{
+    prelude::*,
     gpio::{
         gpioe::PE9,
-        gpioc::{PC4, PC5},
-        Alternate, Output, PushPull
+        Output, PushPull
     },
-    serial::Serial,
-    prelude::*,
-    pac::USART1
+    usb::{Peripheral, UsbBus}
 };
 use rtic::cyccnt::U32Ext;
+use usb_device::prelude::*;
+use usbd_serial::{SerialPort, USB_CLASS_CDC};
+use usb_device::bus::UsbBusAllocator;
 
 
 const CYCLES_PER_MILLISECOND: u32 = 72_000;
@@ -24,14 +29,15 @@ const WRITE1_PERIOD: u32 = 400 * CYCLES_PER_MILLISECOND;
 const WRITE2_PERIOD: u32 = 399 * CYCLES_PER_MILLISECOND;
 
 
-type SerialBus = Serial<USART1, (PC4<Alternate<PushPull, 7_u8>>, PC5<Alternate<PushPull, 7_u8>>)>;
+static mut USB_BUS: Option<UsbBusAllocator<UsbBus<Peripheral>>> = None;
 
 #[app(device = stm32f3xx_hal::pac, peripherals = true, monotonic = rtic::cyccnt::CYCCNT)]
 const APP: () = {
 
     struct Resources {
         led: PE9<Output<PushPull>>,
-        serial_port: SerialBus,
+        serial_port: SerialPort<'static, UsbBus<Peripheral>>,
+        usb_device: UsbDevice<'static, UsbBus<Peripheral>>,
     }
 
     #[init(schedule = [blinker, write_hello, write_world])]
@@ -45,7 +51,7 @@ const APP: () = {
         // Setup clocks
         let mut flash = dp.FLASH.constrain();
         let mut rcc = dp.RCC.constrain();
-        let clocks = rcc
+        let _clocks = rcc
             .cfgr
             .use_hse(8.MHz())
             .sysclk(72.MHz())
@@ -54,28 +60,46 @@ const APP: () = {
 
         // Setup LED
         let mut gpioe = dp.GPIOE.split(&mut rcc.ahb);
-        let mut led = gpioe.pe9.into_push_pull_output(&mut gpioe.moder, &mut gpioe.otyper);
+        let led = gpioe.pe9.into_push_pull_output(&mut gpioe.moder, &mut gpioe.otyper);
 
-        // Setup serial port
-        let mut gpioc = dp.GPIOC.split(&mut rcc.ahb);
+        // Setup usb
+        let mut gpioa = dp.GPIOA.split(&mut rcc.ahb);
+        let usb_dm = gpioa.pa11.into_af14_push_pull(&mut gpioa.moder, &mut gpioa.otyper, &mut gpioa.afrh);
+        let usb_dp = gpioa.pa12.into_af14_push_pull(&mut gpioa.moder, &mut gpioa.otyper, &mut gpioa.afrh);
 
-        let tx = gpioc.pc4.into_af7_push_pull(&mut gpioc.moder, &mut gpioc.otyper, &mut gpioc.afrl);
-        let rx = gpioc.pc5.into_af7_push_pull(&mut gpioc.moder, &mut gpioc.otyper, &mut gpioc.afrl);
+        let usb = Peripheral {
+            usb: dp.USB,
+            pin_dm: usb_dm,
+            pin_dp: usb_dp,
+        };
 
-        let serial_port = Serial::new(dp.USART1, (tx, rx), 115_200.Bd(), clocks, &mut rcc.apb2);
+
+        let (serial_port, usb_device) = unsafe {
+            USB_BUS = Some(UsbBus::new(usb));
+            (
+                SerialPort::new(&USB_BUS.as_ref().unwrap()),
+                UsbDeviceBuilder::new(&USB_BUS.as_ref().unwrap(), UsbVidPid(0x16c0, 0x27dd))
+                    .manufacturer("Our company")
+                    .product("Serial port")
+                    .serial_number("TEST")
+                    .device_class(USB_CLASS_CDC)
+                    .build()
+            )
+        };
 
         // Schedule the blinking task
         cx.schedule.blinker(cx.start + BLINK_ON_DURATION.cycles()).unwrap();
 
         // Schedule first write task
-        cx.schedule.write_hello(cx.start).unwrap();
+        cx.schedule.write_hello(cx.start + (100 * CYCLES_PER_MILLISECOND).cycles()).unwrap();
 
         // Schedule second write task
-        cx.schedule.write_world(cx.start).unwrap();
+        cx.schedule.write_world(cx.start + (100 * CYCLES_PER_MILLISECOND).cycles()).unwrap();
 
         init::LateResources {
             led,
             serial_port,
+            usb_device,
         }
     }
 
@@ -97,19 +121,15 @@ const APP: () = {
         }
     }
 
-    #[task(priority = 1, resources = [serial_port], schedule = [write_hello])]
+    #[task(priority = 1, resources = [usb_device, serial_port], schedule = [write_hello])]
     fn write_hello(cx: write_hello::Context) {
-        Exclusive(cx.resources.serial_port).lock(|serial| {
-            write_to_serial(serial, "Hello\n\r");
-        });
+        write_to_usb(cx.resources.usb_device, cx.resources.serial_port, "Hello\n\r");
         cx.schedule.write_hello(cx.scheduled + WRITE1_PERIOD.cycles()).unwrap()
     }
 
-    #[task(priority = 1, resources = [serial_port], schedule = [write_world])]
+    #[task(priority = 1, resources = [usb_device, serial_port], schedule = [write_world])]
     fn write_world(cx: write_world::Context) {
-        Exclusive(cx.resources.serial_port).lock(|serial| {
-            write_to_serial(serial, "World\n\r");
-        });
+        write_to_usb(cx.resources.usb_device, cx.resources.serial_port, "World\n\r");
         cx.schedule.write_world(cx.scheduled + WRITE2_PERIOD.cycles()).unwrap()
     }
 
@@ -120,10 +140,15 @@ const APP: () = {
     }
 };
 
-
-fn write_to_serial(serial: &mut SerialBus, string: &str) {
-    for byte in string.bytes() {
-        while !serial.is_txe() {}
-        serial.write(byte).ok();
-    }
+#[inline(always)]
+fn write_to_usb(usb_device: &mut UsbDevice<UsbBus<Peripheral>>, serial_port: &mut SerialPort<UsbBus<Peripheral>>, string: &str) {
+    Exclusive(usb_device).lock(|usb_device| {
+        if usb_device.poll(&mut [serial_port]) {
+            cortex_m::asm::bkpt();
+            serial_port.write(string.as_bytes()).unwrap();
+        } else {
+            cortex_m::asm::nop();
+            cortex_m::asm::delay(10 * CYCLES_PER_MILLISECOND);
+        }
+    });
 }
