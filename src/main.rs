@@ -14,6 +14,7 @@ use stm32f3xx_hal::{
 use usb_device::bus;
 use usb_device::prelude::*;
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
+use rtic::cyccnt::{Instant, Duration};
 
 
 const CYCLES_PER_MILLISECOND: u32 = 72_000;
@@ -132,15 +133,8 @@ const APP: () = {
         }
     }
 
-    #[task(priority = 3, resources = [serial])]
-    fn write_hello(mut cx: write_hello::Context) {
-        serial_write(Exclusive(&mut cx.resources.serial));
-    }
-
     extern "C" {
         fn EXTI0();
-        fn EXTI1();
-        fn EXTI2();
     }
 };
 
@@ -148,11 +142,48 @@ fn usb_poll<B: bus::UsbBus>(
     usb_dev: &mut UsbDevice<'static, B>,
     serial: &mut SerialPort<'static, B>,
 ) {
-    usb_dev.poll(&mut [serial]);
+    if !usb_dev.poll(&mut [serial]){
+        return;
+    }
+
+    static mut NEXT_WRITE1_TIME: Option<Instant> = None;
+    static mut NEXT_WRITE2_TIME: Option<Instant> = None;
+
+    unsafe {
+        match (NEXT_WRITE1_TIME, NEXT_WRITE2_TIME) {
+            (None, None) => {
+                NEXT_WRITE1_TIME = Some(Instant::now());
+                NEXT_WRITE2_TIME = Some(Instant::now());
+            },
+            _ => {}
+        }
+
+        scheduled_write(NEXT_WRITE1_TIME.as_mut().unwrap(), WRITE1_PERIOD.cycles(), "Hello!\n\r", serial);
+        scheduled_write(NEXT_WRITE2_TIME.as_mut().unwrap(), WRITE2_PERIOD.cycles(), "World!\n\r", serial);
+    }
 }
 
-fn serial_write<B: bus::UsbBus>(mut serial: Exclusive<SerialPort<'static, B>>) {
-    serial.lock(|serial| {
-        match serial.write(&[0x29]) { _ => {}};
-    });
+fn scheduled_write<B: bus::UsbBus>(
+    next_write_time: &mut Instant,
+    period: Duration,
+    message: &str,
+    serial: &mut SerialPort<'static, B>
+) {
+    if Instant::now() - period >= *next_write_time {
+        serial_write(serial, message.as_bytes());
+        *next_write_time += period;
+    }
+}
+
+fn serial_write<B: bus::UsbBus>(serial: &mut SerialPort<'static, B>, data: &[u8]) {
+    let mut cur_offset = 0;
+
+    while cur_offset < data.len() {
+        match serial.write(&data[cur_offset..]) {
+            Ok(count_written) => {
+                cur_offset += count_written;
+            }
+            _ => {}
+        };
+    }
 }
