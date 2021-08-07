@@ -1,0 +1,7 @@
+[package]
+name = "oxyprem-noah-sensor-protocol"
+version = "0.1.0"
+authors = ["Murphy <murphy@oxyprem.com>"]
+edition = "2018"
+
+
