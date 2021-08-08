@@ -110,3 +110,40 @@ fn print_message() {
 
     println!("");
 }
+
+
+#[test]
+fn correct_parser_states() {
+    let mut message: [u8; 4] = [1, 2, 3, 4];
+    let message_num: u8 = 2;
+    let recipient: u8 = 5;
+    let length = message.len();
+
+    frobnicate(&mut message, message_num);
+    let message_num_field: [u8; 1] = [message_num];
+    let recipient_field: [u8; 1] = [recipient];
+    let length_field: [u8; 2] = (length as u16).to_le_bytes();
+
+
+    fn feed_parser(bytes: &[u8], last_crc: u32, parser: &mut Parser) -> u32 {
+        bytes.iter().for_each(|b| parser.step(*b));
+        crc32c_update(last_crc, &bytes)
+    }
+
+    let mut parser = Parser::new();
+
+    let crc = 0;
+    assert_eq!(parser.state, ParserNeeds::Prefix(0));
+    let crc = feed_parser(&PREFIX, crc, &mut parser);
+    assert_eq!(parser.state, ParserNeeds::Recipient);
+    let crc = feed_parser(&recipient_field, crc, &mut parser);
+    assert_eq!(parser.state, ParserNeeds::Counter);
+    let crc = feed_parser(&message_num_field, crc, &mut parser);
+    assert_eq!(parser.state, ParserNeeds::Length(0));
+    let crc = feed_parser(&length_field, crc, &mut parser);
+    assert_eq!(parser.state, ParserNeeds::Payload(0));
+    let crc = feed_parser(&message, crc, &mut parser);
+    assert_eq!(parser.state, ParserNeeds::Checksum(0));
+    feed_parser(&crc.to_be_bytes(), crc, &mut parser);
+    assert_eq!(parser.state, ParserNeeds::Prefix(0));
+}

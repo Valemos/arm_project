@@ -2,8 +2,11 @@
 //!
 //! TODO: Doctest demonstrating how to serialise and parse messages.
 
+use crate::parse::ParserNeeds::Prefix;
+
 #[cfg(test)]
 pub mod test;
+
 
 /// Obscures the encoding.
 ///
@@ -37,6 +40,7 @@ fn crc32c_byte(byte: u8) -> u32 {
 pub fn crc32c(bytes: &[u8]) -> u32 {
     crc32c_update(0, bytes)
 }
+
 pub fn crc32c_update(seed: u32, bytes: &[u8]) -> u32 {
     !bytes.iter().fold(!seed, |acc, octet| {
         (acc >> 8) ^ crc32c_byte((acc as u8) ^ *octet)
@@ -50,14 +54,26 @@ struct MessageData {
     message_num: u8,
     payload_length: usize,
     payload_buffer: [u8; Self::MAX_PAYLOAD],
-    checksum: [u8; 4],
+    checksum: u32,
 }
 impl MessageData {
     pub const PAYLOAD_LENGTH_BYTES: usize = 2;
     // TODO: This should be set to the max message size.
     pub const MAX_PAYLOAD: usize = 200;
 }
+impl Default for MessageData {
+    fn default() -> Self {
+        MessageData {
+            recipient: 0,
+            message_num: 0,
+            payload_length: 0,
+            payload_buffer: [0; Self::MAX_PAYLOAD],
+            checksum: 0,
+        }
+    }
+}
 
+#[derive(Debug, PartialEq)]
 enum ParserNeeds {
     Prefix(usize),
     Recipient,
@@ -85,10 +101,18 @@ pub struct Parser {
 
 impl Parser {
 
+    pub fn new() -> Parser {
+        Parser {
+            parsed: MessageData::default(),
+            state: Prefix(0)
+        }
+    }
+
     pub fn step(&mut self, byte: u8) {
         use ParserNeeds::*;
 
-        // TODO: Update the checksum as bytes are read in.
+        self.parsed.checksum = (self.parsed.checksum >> 8)
+                                ^ crc32c_byte((self.parsed.checksum as u8) ^ byte);
 
         self.state = match self.state {
             Prefix(index) => {
@@ -133,7 +157,7 @@ impl Parser {
                 }
             }
             Checksum(index) => {
-                if byte != self.parsed.checksum[index] {
+                if byte != take_byte_u32(self.parsed.checksum, index) {
                     Err(())
                 } else if index + 1 < 4 {
                     Ok(Checksum(index + 1))
@@ -149,7 +173,11 @@ impl Parser {
     }
 
     fn reset(&mut self) -> ParserNeeds {
-        self.parsed.checksum = [0; 4];
+        self.parsed.checksum = 0;
         ParserNeeds::Prefix(0)
     }
+}
+
+fn take_byte_u32(number: u32, index: usize) -> u8 {
+    (number >> (8 * (3 - index))) as u8
 }
