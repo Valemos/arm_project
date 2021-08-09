@@ -81,6 +81,17 @@ mod crc32c_tests {
 
 #[cfg(test)]
 #[test]
+fn take_byte_from_u32_correct() {
+    let num = 857870592u32; // in hex is 33221100
+    let bytes = [51u8, 34u8, 17u8, 0u8];
+
+    for i in 0..4 {
+        assert_eq!(take_byte_u32(num, i), bytes[i]);
+    }
+}
+
+#[cfg(test)]
+#[test]
 fn print_message() {
     println!("===============================");
     let mut message: [u8; 4] = [1, 2, 3, 4];
@@ -146,4 +157,32 @@ fn correct_parser_states() {
     assert_eq!(parser.state, ParserNeeds::Checksum(0));
     feed_parser(&crc.to_be_bytes(), crc, &mut parser);
     assert_eq!(parser.state, ParserNeeds::Prefix(0));
+}
+
+#[test]
+fn byte_buffer_append_correct() {
+    let mut buffer = ByteBuffer::<10>::new();
+    assert_eq!(buffer.get_result(), &[]);
+    buffer.append(&[0x11]);
+    assert_eq!(buffer.get_result(), &[0x11]);
+    buffer.append(&[0x22, 0x23]);
+    assert_eq!(buffer.get_result(), &[0x11, 0x22, 0x23]);
+}
+
+#[test]
+fn byte_buffer_truncate_correct() {
+    let mut buffer = ByteBuffer::<10>::new().append(&[0x11, 0x22, 0x23]);
+    buffer.truncate(1);
+    assert_eq!(buffer.get_result(), &[0x11, 0x22]);
+    buffer.truncate(1);
+    assert_eq!(buffer.get_result(), &[0x11]);
+    buffer.truncate(1);
+    assert_eq!(buffer.get_result(), &[]);
+}
+
+#[test]
+fn buffer_truncate_zeros_correct() {
+    let mut buffer = ByteBuffer::<10>::new().append(&[0; 4]);
+    buffer.truncate(2);
+    assert_eq!(buffer.get_result(), &[0; 2]);
 }

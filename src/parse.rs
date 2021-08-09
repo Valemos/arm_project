@@ -2,7 +2,11 @@
 //!
 //! TODO: Doctest demonstrating how to serialise and parse messages.
 
-use crate::parse::ParserNeeds::Prefix;
+use bytebuffer::ByteBuffer;
+
+use crate::parse::ParserNeeds::{Finished, Prefix};
+use crate::serialization::ByteBuffer;
+use crate::types::MessageContainer;
 
 #[cfg(test)]
 pub mod test;
@@ -49,30 +53,6 @@ pub fn crc32c_update(seed: u32, bytes: &[u8]) -> u32 {
 
 const PREFIX: [u8; 4] = [0xaa, 0xaa, 0x55, 0x55];
 
-struct MessageData {
-    recipient: u8,
-    message_num: u8,
-    payload_length: usize,
-    payload_buffer: [u8; Self::MAX_PAYLOAD],
-    checksum: u32,
-}
-impl MessageData {
-    pub const PAYLOAD_LENGTH_BYTES: usize = 2;
-    // TODO: This should be set to the max message size.
-    pub const MAX_PAYLOAD: usize = 200;
-}
-impl Default for MessageData {
-    fn default() -> Self {
-        MessageData {
-            recipient: 0,
-            message_num: 0,
-            payload_length: 0,
-            payload_buffer: [0; Self::MAX_PAYLOAD],
-            checksum: 0,
-        }
-    }
-}
-
 #[derive(Debug, PartialEq)]
 enum ParserNeeds {
     Prefix(usize),
@@ -94,17 +74,28 @@ impl Default for ParserNeeds {
 /// This is implemented as a state machine, where the state corresponds to the next byte expected from the input.  If the next byte is incompatible with the message format, the bytes read so far are discarded and the parser seraches for the start of the next message.
 ///
 /// TODO: Implement iterator, so that we can do `for message in parser { ... }`.
-pub struct Parser {
-    parsed: MessageData,
+pub struct Parser<'a> {
+    parsed: MessageContainer<'a>,
     state: ParserNeeds,
 }
 
-impl Parser {
+impl<'a> Parser<'a> {
 
     pub fn new() -> Parser {
         Parser {
-            parsed: MessageData::default(),
+            parsed: MessageContainer::default(),
             state: Prefix(0)
+        }
+    }
+
+    pub fn try_read_next(&mut self) -> Result<&'a[u8], ()> {
+
+        //TODO: add source of reading and read bytes from there
+
+        if self.state == Finished {
+            Ok(&self.parsed.payload_buffer[0..self.parsed.payload_length as usize])
+        } else {
+            Err(())
         }
     }
 
@@ -140,9 +131,9 @@ impl Parser {
                 } else {
                     self.parsed.payload_length + ((byte as usize) << index)
                 };
-                if self.parsed.payload_length > MessageData::MAX_PAYLOAD {
+                if self.parsed.payload_length > MessageContainer::MAX_PAYLOAD {
                     Err(())
-                } else if index + 1 < MessageData::PAYLOAD_LENGTH_BYTES {
+                } else if index + 1 < MessageContainer::PAYLOAD_LENGTH_BYTES {
                     Ok(Length(index + 1))
                 } else {
                     Ok(Payload(0))
@@ -159,7 +150,7 @@ impl Parser {
             Checksum(index) => {
                 if byte != take_byte_u32(self.parsed.checksum, index) {
                     Err(())
-                } else if index + 1 < 4 {
+                } else if index < 3 {
                     Ok(Checksum(index + 1))
                 } else {
                     Ok(Finished)
@@ -177,7 +168,18 @@ impl Parser {
         ParserNeeds::Prefix(0)
     }
 }
+impl<'a> Iterator for Parser {
+    type Item = &'a[u8];
 
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.try_read_next() {
+            Ok(message) => { Some(message) }
+            Err(_) => { None }
+        }
+    }
+}
+
+#[inline(always)]
 fn take_byte_u32(number: u32, index: usize) -> u8 {
     (number >> (8 * (3 - index))) as u8
 }
