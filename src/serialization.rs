@@ -1,15 +1,15 @@
 use crate::types::MessageContainer;
 use crate::parse::crc32c;
 
-// TODO: test serialization
 
-fn serialize(message: &[u8]) -> ByteBuffer<MessageContainer::MAX_CONTAINER_SIZE> {
+pub fn serialize(message: &[u8]) -> ByteBuffer<{ MessageContainer::MAX_CONTAINER_SIZE }> {
     let mut buffer = MessageContainer {
         recipient: 0,
         message_num: 0,
         payload_length: message.len(),
         payload_buffer: {
             let mut buf = [0; MessageContainer::MAX_PAYLOAD];
+            message.iter().enumerate().for_each(|(i, byte)| buf[i] = *byte);
             buf
         },
         checksum: 0

@@ -40,7 +40,7 @@ pub struct EnvironmentalMessage {
 }
 
 
-pub struct MessageContainer<'a> {
+pub struct MessageContainer {
     pub recipient: u8,
     pub message_num: u8,
     pub payload_length: usize,
@@ -48,13 +48,13 @@ pub struct MessageContainer<'a> {
     pub checksum: u32,
 }
 
-impl<'a> MessageContainer {
+impl MessageContainer {
     pub const PAYLOAD_LENGTH_BYTES: usize = 2;
     pub const MAX_PAYLOAD: usize = 200;
     pub const MAX_CONTAINER_SIZE: usize = core::mem::size_of::<MessageContainer>();
 
-    pub fn get_byte_buffer(&self) -> ByteBuffer<{ MessageContainer::MAX_MESSAGE_SIZE }> {
-        let mut buffer = ByteBuffer::<MessageContainer::MAX_MESSAGE_SIZE>::new();
+    pub fn get_byte_buffer(&self) -> ByteBuffer<{ MessageContainer::MAX_CONTAINER_SIZE }> {
+        let mut buffer = ByteBuffer::<MessageContainer::MAX_CONTAINER_SIZE>::new();
 
         buffer.append_byte(self.recipient)
             .append_byte(self.message_num)
@@ -63,6 +63,10 @@ impl<'a> MessageContainer {
             .append(&self.checksum.to_be_bytes());
 
         buffer
+    }
+
+    pub fn get_payload<'a>(&self) -> &'a[u8] {
+        &self.payload_buffer[0..self.payload_length]
     }
 }
 

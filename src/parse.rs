@@ -2,7 +2,6 @@
 //!
 //! TODO: Doctest demonstrating how to serialise and parse messages.
 
-use bytebuffer::ByteBuffer;
 
 use crate::parse::ParserNeeds::{Finished, Prefix};
 use crate::serialization::ByteBuffer;
@@ -74,12 +73,12 @@ impl Default for ParserNeeds {
 /// This is implemented as a state machine, where the state corresponds to the next byte expected from the input.  If the next byte is incompatible with the message format, the bytes read so far are discarded and the parser seraches for the start of the next message.
 ///
 /// TODO: Implement iterator, so that we can do `for message in parser { ... }`.
-pub struct Parser<'a> {
-    parsed: MessageContainer<'a>,
+pub struct Parser {
+    parsed: MessageContainer,
     state: ParserNeeds,
 }
 
-impl<'a> Parser<'a> {
+impl Parser {
 
     pub fn new() -> Parser {
         Parser {
@@ -88,7 +87,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn try_read_next(&mut self) -> Result<&'a[u8], ()> {
+    pub fn try_read_next(&mut self) -> Result<&[u8], ()> {
 
         //TODO: add source of reading and read bytes from there
 
@@ -167,12 +166,28 @@ impl<'a> Parser<'a> {
         self.parsed.checksum = 0;
         ParserNeeds::Prefix(0)
     }
+
+    fn iter_mut(&mut self) -> ParserIterator<'_> {
+        ParserIterator { parser: &mut self}
+    }
 }
-impl<'a> Iterator for Parser {
+impl<'a> IntoIterator for Parser<'a> {
+    type Item = &'a [u8];
+    type IntoIter = ParserIterator<'a>;
+
+    fn into_iter(mut self) -> Self::IntoIter {
+        ParserIterator { parser: &mut self}
+    }
+}
+
+struct ParserIterator<'a> {
+    parser: &'a mut Parser,
+}
+impl<'a> Iterator for ParserIterator<'a> {
     type Item = &'a[u8];
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.try_read_next() {
+        match self.parser.try_read_next() {
             Ok(message) => { Some(message) }
             Err(_) => { None }
         }

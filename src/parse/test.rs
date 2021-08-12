@@ -186,3 +186,18 @@ fn buffer_truncate_zeros_correct() {
     buffer.truncate(2);
     assert_eq!(buffer.get_result(), &[0; 2]);
 }
+
+
+#[test]
+fn serialization_correct() {
+    let message = &[0x11u8, 0x22u8, 0x23u8];
+    let packed_message = crate::serialization::serialize(message).get_result();
+
+    let mut parser = Parser::new();
+
+    for byte in packed_message {
+        parser.step(*byte);
+    }
+
+    assert_eq!(parser.parsed.get_payload(), message);
+}
