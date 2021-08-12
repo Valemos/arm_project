@@ -1,6 +1,8 @@
 //! Sensor message types
 
+use core::mem::size_of;
 use crate::serialization::ByteBuffer;
+use std::io::Read;
 
 /// Messages sent by the sensor
 #[derive(Copy, Clone, Debug)]
@@ -40,32 +42,35 @@ pub struct EnvironmentalMessage {
 }
 
 
+pub type PayloadType = [u8; MessageContainer::MAX_PAYLOAD];
+
 pub struct MessageContainer {
     pub recipient: u8,
     pub message_num: u8,
     pub payload_length: usize,
-    pub payload_buffer: [u8; Self::MAX_PAYLOAD],
+    pub payload_buffer: PayloadType,
     pub checksum: u32,
 }
 
 impl MessageContainer {
+
     pub const PAYLOAD_LENGTH_BYTES: usize = 2;
     pub const MAX_PAYLOAD: usize = 200;
-    pub const MAX_CONTAINER_SIZE: usize = core::mem::size_of::<MessageContainer>();
+
+    // all bytes that can be used to send message
+    pub const MAX_CONTAINER_SIZE: usize = 2 + size_of::<usize>() + Self::MAX_PAYLOAD + size_of::<u32>();
 
     pub fn get_byte_buffer(&self) -> ByteBuffer<{ MessageContainer::MAX_CONTAINER_SIZE }> {
-        let mut buffer = ByteBuffer::<MessageContainer::MAX_CONTAINER_SIZE>::new();
+        let mut buffer = ByteBuffer::<{ Self::MAX_CONTAINER_SIZE }>::new();
 
         buffer.append_byte(self.recipient)
             .append_byte(self.message_num)
             .append(&self.payload_length.to_be_bytes())
             .append(&self.payload_buffer[..self.payload_length])
-            .append(&self.checksum.to_be_bytes());
-
-        buffer
+            .append(&self.checksum.to_be_bytes())
     }
 
-    pub fn get_payload<'a>(&self) -> &'a[u8] {
+    pub fn get_payload(&self) -> &[u8] {
         &self.payload_buffer[0..self.payload_length]
     }
 }
@@ -81,3 +86,4 @@ impl Default for MessageContainer {
         }
     }
 }
+

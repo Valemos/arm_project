@@ -5,7 +5,8 @@
 
 use crate::parse::ParserNeeds::{Finished, Prefix};
 use crate::serialization::ByteBuffer;
-use crate::types::MessageContainer;
+use crate::types::{MessageContainer, PayloadType};
+use std::io::Read;
 
 #[cfg(test)]
 pub mod test;
@@ -72,30 +73,38 @@ impl Default for ParserNeeds {
 ///
 /// This is implemented as a state machine, where the state corresponds to the next byte expected from the input.  If the next byte is incompatible with the message format, the bytes read so far are discarded and the parser seraches for the start of the next message.
 ///
-/// TODO: Implement iterator, so that we can do `for message in parser { ... }`.
-pub struct Parser {
+pub struct Parser<T: Read> {
+    byte_stream: T,
     parsed: MessageContainer,
     state: ParserNeeds,
 }
 
-impl Parser {
+impl<T: Read> Parser<T> {
 
-    pub fn new() -> Parser {
+    pub fn from_stream(byte_stream: T) -> Parser<T> {
         Parser {
+            byte_stream,
             parsed: MessageContainer::default(),
             state: Prefix(0)
         }
     }
 
-    pub fn try_read_next(&mut self) -> Result<&[u8], ()> {
+    pub fn try_read_next(&mut self) -> Result<PayloadType, ()> {
 
-        //TODO: add source of reading and read bytes from there
-
-        if self.state == Finished {
-            Ok(&self.parsed.payload_buffer[0..self.parsed.payload_length as usize])
-        } else {
-            Err(())
+        self.state = self.reset();
+        for byte in self.byte_stream.by_ref().bytes() {
+            match byte {
+                Ok(byte) => {
+                    self.step(byte);
+                    if self.state == Finished {
+                        return Ok(self.parsed.payload_buffer.clone());
+                    }
+                }
+                Err(_) => return Err(()),
+            }
         }
+
+        Err(())
     }
 
     pub fn step(&mut self, byte: u8) {
@@ -164,27 +173,24 @@ impl Parser {
 
     fn reset(&mut self) -> ParserNeeds {
         self.parsed.checksum = 0;
+        self.parsed.payload_buffer = [0; MessageContainer::MAX_PAYLOAD];
         ParserNeeds::Prefix(0)
     }
-
-    fn iter_mut(&mut self) -> ParserIterator<'_> {
-        ParserIterator { parser: &mut self}
-    }
 }
-impl<'a> IntoIterator for Parser<'a> {
-    type Item = &'a [u8];
-    type IntoIter = ParserIterator<'a>;
+impl<T: Read> IntoIterator for Parser<T> {
+    type Item = PayloadType;
+    type IntoIter = ParserIterator<T>;
 
     fn into_iter(mut self) -> Self::IntoIter {
-        ParserIterator { parser: &mut self}
+        ParserIterator { parser: self}
     }
 }
 
-struct ParserIterator<'a> {
-    parser: &'a mut Parser,
+struct ParserIterator<T: Read> {
+    parser: Parser<T>,
 }
-impl<'a> Iterator for ParserIterator<'a> {
-    type Item = &'a[u8];
+impl<T: Read> Iterator for ParserIterator<T> {
+    type Item = PayloadType;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.parser.try_read_next() {

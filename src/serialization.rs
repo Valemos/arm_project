@@ -14,11 +14,10 @@ pub fn serialize(message: &[u8]) -> ByteBuffer<{ MessageContainer::MAX_CONTAINER
         },
         checksum: 0
     }.get_byte_buffer();
-    buffer.truncate(core::mem::size_of::<u32>());
+    buffer = buffer.truncate(core::mem::size_of::<u32>());
 
-    let mut checksum = crc32c(buffer.get_result());
-    buffer.append(&checksum.to_be_bytes());
-    buffer
+    let checksum = crc32c(buffer.get_result());
+    buffer.append(&checksum.to_be_bytes())
 }
 
 pub struct ByteBuffer<const SIZE: usize>{
@@ -33,21 +32,21 @@ impl<const SIZE: usize> ByteBuffer<SIZE> {
         }
     }
 
-    pub fn append_byte(&mut self, byte: u8) -> &mut Self {
-        self.data[self.end] = *byte;
+    pub fn append_byte(mut self, byte: u8) -> Self {
+        self.data[self.end] = byte;
         self.end += 1;
         self
     }
 
-    pub fn append(&mut self, bytes: &[u8]) -> &mut Self {
-        *bytes.into_iter().for_each(|byte| {
+    pub fn append(mut self, bytes: &[u8]) -> Self {
+        bytes.iter().for_each(|byte| {
             self.data[self.end] = *byte;
             self.end += 1;
         });
         self
     }
 
-    pub fn truncate(&mut self, amount: usize) -> &mut Self {
+    pub fn truncate(mut self, amount: usize) -> Self {
         assert!(self.end - amount > 0);
         assert!(amount > 0);
 

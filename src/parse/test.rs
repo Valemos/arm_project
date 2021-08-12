@@ -136,12 +136,12 @@ fn correct_parser_states() {
     let length_field: [u8; 2] = (length as u16).to_le_bytes();
 
 
-    fn feed_parser(bytes: &[u8], last_crc: u32, parser: &mut Parser) -> u32 {
+    fn feed_parser<T: Read>(bytes: &[u8], last_crc: u32, parser: &mut Parser<T>) -> u32 {
         bytes.iter().for_each(|b| parser.step(*b));
         crc32c_update(last_crc, &bytes)
     }
 
-    let mut parser = Parser::new();
+    let mut parser = Parser::from_stream(ZeroStream{});
 
     let crc = 0;
     assert_eq!(parser.state, ParserNeeds::Prefix(0));
@@ -163,27 +163,27 @@ fn correct_parser_states() {
 fn byte_buffer_append_correct() {
     let mut buffer = ByteBuffer::<10>::new();
     assert_eq!(buffer.get_result(), &[]);
-    buffer.append(&[0x11]);
+    buffer = buffer.append(&[0x11]);
     assert_eq!(buffer.get_result(), &[0x11]);
-    buffer.append(&[0x22, 0x23]);
+    buffer = buffer.append(&[0x22, 0x23]);
     assert_eq!(buffer.get_result(), &[0x11, 0x22, 0x23]);
 }
 
 #[test]
 fn byte_buffer_truncate_correct() {
     let mut buffer = ByteBuffer::<10>::new().append(&[0x11, 0x22, 0x23]);
-    buffer.truncate(1);
+    buffer = buffer.truncate(1);
     assert_eq!(buffer.get_result(), &[0x11, 0x22]);
-    buffer.truncate(1);
+    buffer = buffer.truncate(1);
     assert_eq!(buffer.get_result(), &[0x11]);
-    buffer.truncate(1);
+    buffer = buffer.truncate(1);
     assert_eq!(buffer.get_result(), &[]);
 }
 
 #[test]
 fn buffer_truncate_zeros_correct() {
     let mut buffer = ByteBuffer::<10>::new().append(&[0; 4]);
-    buffer.truncate(2);
+    buffer = buffer.truncate(2);
     assert_eq!(buffer.get_result(), &[0; 2]);
 }
 
@@ -191,13 +191,17 @@ fn buffer_truncate_zeros_correct() {
 #[test]
 fn serialization_correct() {
     let message = &[0x11u8, 0x22u8, 0x23u8];
-    let packed_message = crate::serialization::serialize(message).get_result();
+    let packed_message = crate::serialization::serialize(message);
 
-    let mut parser = Parser::new();
-
-    for byte in packed_message {
-        parser.step(*byte);
+    for parsed in Parser::from_stream(packed_message.get_result()) {
+        assert_eq!(&parsed[0..3], message);
     }
+}
 
-    assert_eq!(parser.parsed.get_payload(), message);
+pub struct ZeroStream {}
+impl Read for ZeroStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        buf[0] = 0;
+        Ok(1)
+    }
 }
